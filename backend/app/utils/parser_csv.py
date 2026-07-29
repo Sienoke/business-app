@@ -7,123 +7,83 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def detect_dialect(sample: str) -> str:
-    if ';' in sample:
-        return ';'
-    elif ',' in sample:
-        return ','
-    return ';'
-
 def parse_bank_statement_csv(content: str) -> List[Dict]:
     operations = []
-    logger.info("Starting CSV parsing")
+    logger.info("Starting CSV parsing (index-based)")
     
     if content.startswith('\ufeff'):
         content = content[1:]
     
-    lines = [line.strip() for line in content.split('\n') if line.strip()]
-    logger.info(f"Total non-empty lines: {len(lines)}")
-    if not lines:
-        logger.warning("No non-empty lines found")
-        return operations
-    
-    delimiter = detect_dialect(lines[0])
-    logger.info(f"Detected delimiter: '{delimiter}'")
-    
     csv_file = io.StringIO(content)
-    reader = csv.DictReader(csv_file, delimiter=delimiter, quotechar='"')
+    reader = csv.reader(csv_file, delimiter=';', quotechar='"')
     
-    headers = reader.fieldnames
-    if not headers:
-        logger.error("No headers found")
-        return operations
-    logger.info(f"Headers: {headers}")
-    
-    date_col = None
-    debit_col = None
-    credit_col = None
-    counterparty_col = None
-    unp_col = None
-    purpose_col = None
-    
-    for h in headers:
-        h_clean = h.strip().lower()
-        if 'дат' in h_clean or 'date' in h_clean:
-            date_col = h
-        elif 'дебет' in h_clean or 'debit' in h_clean:
-            debit_col = h
-        elif 'кредит' in h_clean or 'credit' in h_clean:
-            credit_col = h
-        elif 'назван' in h_clean or 'контрагент' in h_clean or 'counterparty' in h_clean:
-            counterparty_col = h
-        elif 'унп' in h_clean or 'unp' in h_clean:
-            unp_col = h
-        elif 'назначен' in h_clean or 'purpose' in h_clean or 'платеж' in h_clean:
-            purpose_col = h
-    
-    if not date_col and len(headers) >= 1:
-        date_col = headers[0]
-    if not debit_col and len(headers) >= 8:
-        debit_col = headers[7]
-    if not credit_col and len(headers) >= 9:
-        credit_col = headers[8]
-    if not counterparty_col and len(headers) >= 6:
-        counterparty_col = headers[5]
-    if not unp_col and len(headers) >= 7:
-        unp_col = headers[6]
-    if not purpose_col and len(headers) >= 12:
-        purpose_col = headers[11]
-    
-    logger.info(f"Detected columns: date={date_col}, debit={debit_col}, credit={credit_col}, counterparty={counterparty_col}, unp={unp_col}, purpose={purpose_col}")
-    
-    if not date_col or (not debit_col and not credit_col):
-        logger.error("Cannot detect required columns")
+    rows = list(reader)
+    if not rows:
+        logger.error("No rows found")
         return operations
     
-    row_count = 0
-    for row in reader:
-        row_count += 1
-        if row_count <= 3:
-            logger.info(f"Row {row_count}: {row}")
+    logger.info(f"Total rows: {len(rows)}")
+    logger.info(f"Header row: {rows[0] if rows else 'None'}")
+    
+    # Skip header row
+    data_rows = rows[1:] if len(rows) > 1 else []
+    logger.info(f"Data rows: {len(data_rows)}")
+    
+    if not data_rows:
+        logger.warning("No data rows after header")
+        return operations
+    
+    # Define column indices based on the sample
+    # 0: date, 1: doc_no, 2: op_code, 3: currency, 4: bank_code,
+    # 5: counterparty_name, 6: unp, 7: account, 8: debit, 9: credit,
+    # 10: smp_date, 11: purpose
+    DATE_IDX = 0
+    DEBIT_IDX = 8
+    CREDIT_IDX = 9
+    COUNTERPARTY_IDX = 5
+    UNP_IDX = 6
+    PURPOSE_IDX = 11
+    
+    for idx, row in enumerate(data_rows, start=1):
+        # Ensure row has enough columns
+        if len(row) < 12:
+            logger.debug(f"Row {idx}: insufficient columns ({len(row)}), skipping")
+            continue
         
-        date_str = row.get(date_col, '').strip()
+        date_str = row[DATE_IDX].strip()
         if not date_str:
-            logger.debug(f"Row {row_count}: no date, skipping")
+            logger.debug(f"Row {idx}: empty date, skipping")
             continue
         
         if not re.match(r'\d{2}\.\d{2}\.\d{4}', date_str):
-            logger.debug(f"Row {row_count}: date format mismatch: '{date_str}', skipping")
+            logger.debug(f"Row {idx}: invalid date format '{date_str}', skipping")
             continue
         
         try:
             date_obj = datetime.strptime(date_str, '%d.%m.%Y').date()
         except ValueError as e:
-            logger.debug(f"Row {row_count}: date parse error: {e}, skipping")
+            logger.debug(f"Row {idx}: date parse error {e}, skipping")
             continue
         
-        debit_str = row.get(debit_col, '').strip() if debit_col else ''
-        credit_str = row.get(credit_col, '').strip() if credit_col else ''
+        debit_str = row[DEBIT_IDX].strip() if len(row) > DEBIT_IDX else ''
+        credit_str = row[CREDIT_IDX].strip() if len(row) > CREDIT_IDX else ''
         
         if not debit_str and not credit_str:
-            logger.debug(f"Row {row_count}: no debit/credit, skipping")
+            logger.debug(f"Row {idx}: no debit/credit, skipping")
             continue
         
         debit = 0.0
         credit = 0.0
         if debit_str:
-            debit_clean = debit_str.replace(' ', '').replace(',', '.')
             try:
-                debit = float(debit_clean)
+                debit = float(debit_str.replace(',', ''))
             except ValueError:
-                logger.debug(f"Row {row_count}: debit conversion failed for '{debit_str}'")
-                debit = 0.0
+                logger.debug(f"Row {idx}: debit conversion failed for '{debit_str}'")
         if credit_str:
-            credit_clean = credit_str.replace(' ', '').replace(',', '.')
             try:
-                credit = float(credit_clean)
+                credit = float(credit_str.replace(',', ''))
             except ValueError:
-                logger.debug(f"Row {row_count}: credit conversion failed for '{credit_str}'")
-                credit = 0.0
+                logger.debug(f"Row {idx}: credit conversion failed for '{credit_str}'")
         
         is_income = None
         amount = 0.0
@@ -134,15 +94,15 @@ def parse_bank_statement_csv(content: str) -> List[Dict]:
             is_income = False
             amount = debit
         else:
-            logger.debug(f"Row {row_count}: amount is zero, skipping")
+            logger.debug(f"Row {idx}: amount is zero, skipping")
             continue
         
-        counterparty = row.get(counterparty_col, '').strip() if counterparty_col else ''
-        unp = row.get(unp_col, '').strip() if unp_col else ''
-        purpose = row.get(purpose_col, '').strip() if purpose_col else ''
+        counterparty = row[COUNTERPARTY_IDX].strip() if len(row) > COUNTERPARTY_IDX else ''
+        unp = row[UNP_IDX].strip() if len(row) > UNP_IDX else ''
+        purpose = row[PURPOSE_IDX].strip() if len(row) > PURPOSE_IDX else ''
         
         if not purpose:
-            purpose = f"Payment by agreement {row.get('Document - No', '')}"
+            purpose = f"Payment by agreement {row[1] if len(row) > 1 else ''}"
         
         operations.append({
             'date': date_obj.isoformat(),
@@ -154,7 +114,7 @@ def parse_bank_statement_csv(content: str) -> List[Dict]:
             'debit': debit,
             'credit': credit
         })
-        logger.info(f"Row {row_count}: operation added: {date_obj} amount={amount} income={is_income}")
+        logger.info(f"Row {idx}: added operation: {date_obj} amount={amount} income={is_income}")
     
-    logger.info(f"Parsed {len(operations)} operations out of {row_count} data rows")
+    logger.info(f"Parsed {len(operations)} operations out of {len(data_rows)} data rows")
     return operations
