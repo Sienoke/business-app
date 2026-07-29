@@ -4,9 +4,13 @@ from app.database import get_db
 from app.models.bank_statement import BankStatement
 from app.models.company import Company
 from app.models.kudir import KUDiREntry
-from app.utils.parser_bank import parse_bank_statement
+from app.utils.parser_txt import parse_bank_statement_txt
+from app.utils.parser_docx import parse_bank_statement_docx
+from app.utils.parser_xlsx import parse_bank_statement_xlsx
+from app.utils.parser_csv import parse_bank_statement_csv
 from datetime import datetime
 import uuid
+import os
 
 router = APIRouter()
 
@@ -16,26 +20,49 @@ async def upload_statement(file: UploadFile = File(...), db: Session = Depends(g
     if not company:
         raise HTTPException(status_code=400, detail="Company not found. Please create company first.")
 
-    # Читаем содержимое файла
+    ext = os.path.splitext(file.filename.lower())[1]
     content = await file.read()
-    try:
-        text_content = content.decode('utf-8')
-    except UnicodeDecodeError:
+
+    if ext == '.txt':
         try:
-            text_content = content.decode('cp1251')  # для Windows-1251
+            text = content.decode('utf-8')
         except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="File encoding not supported. Please use UTF-8 or Windows-1251.")
+            text = content.decode('cp1251')
+        operations = parse_bank_statement_txt(text)
+    elif ext == '.docx':
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            operations = parse_bank_statement_docx(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+    elif ext in ('.xlsx', '.xls'):
+        import tempfile
+        suffix = '.xlsx' if ext == '.xlsx' else '.xls'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            operations = parse_bank_statement_xlsx(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+    elif ext == '.csv':
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            text = content.decode('cp1251')
+        operations = parse_bank_statement_csv(text)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
 
-    # Парсим выписку
-    operations = parse_bank_statement(text_content)
-    
     if not operations:
-        raise HTTPException(status_code=400, detail="No operations found in the file. Please check file format.")
+        raise HTTPException(status_code=400, detail="No operations found.")
 
-    # Сохраняем каждую операцию в базу данных
-    saved_operations = []
+    saved = []
     for op in operations:
-        statement = BankStatement(
+        stmt = BankStatement(
             id=str(uuid.uuid4()),
             company_id=company.id,
             transaction_date=datetime.strptime(op['date'], '%Y-%m-%d').date(),
@@ -45,39 +72,32 @@ async def upload_statement(file: UploadFile = File(...), db: Session = Depends(g
             is_income=op['is_income'],
             file_name=file.filename
         )
-        db.add(statement)
-        
-        # Если операция - доход, добавляем запись в КУДиР
-        if op['is_income'] is True:
-            # Определяем период (квартал)
+        db.add(stmt)
+        if op['is_income']:
             dt = datetime.strptime(op['date'], '%Y-%m-%d')
-            quarter = (dt.month - 1) // 3 + 1
+            quarter = (dt.month - 1)//3 + 1
             period = f"Q{quarter}-{dt.year}"
-            
-            kudir_entry = KUDiREntry(
+            kudir = KUDiREntry(
                 id=str(uuid.uuid4()),
                 company_id=company.id,
                 entry_date=dt.date(),
                 income_amount=op['amount'],
                 expense_amount=0,
                 source="bank",
-                source_id=statement.id,
+                source_id=stmt.id,
                 period=period
             )
-            db.add(kudir_entry)
-        
-        saved_operations.append({
+            db.add(kudir)
+        saved.append({
             'date': op['date'],
             'amount': op['amount'],
             'type': 'Доход' if op['is_income'] else 'Расход',
             'counterparty': op['counterparty'],
             'purpose': op['purpose']
         })
-    
     db.commit()
-    
     return {
-        "message": f"File {file.filename} processed successfully",
+        "message": f"File {file.filename} processed",
         "operations_count": len(operations),
-        "operations": saved_operations
+        "operations": saved
     }
