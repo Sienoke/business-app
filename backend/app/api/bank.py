@@ -10,24 +10,22 @@ router = APIRouter()
 
 @router.post("/upload")
 async def upload_statement(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # Проверяем, что есть компания
     company = db.query(Company).first()
     if not company:
-        raise HTTPException(status_code=400, detail="Сначала создайте компанию в настройках")
+        raise HTTPException(status_code=400, detail="Company not found. Please create company first.")
 
-    # Читаем файл (пока просто сохраняем как пример)
     content = await file.read()
-    # Здесь будет парсер TXT, но для MVP просто сохраняем запись-заглушку
+    
     statement = BankStatement(
         id=str(uuid.uuid4()),
         company_id=company.id,
         transaction_date=datetime.now().date(),
-        amount=0,  # заглушка
-        counterparty="Заглушка",
-        purpose="Заглушка",
+        amount=0,
+        counterparty="Placeholder",
+        purpose="Placeholder",
         is_income=None,
         file_name=file.filename
     )
     db.add(statement)
     db.commit()
-    return {"message": f"Файл {file.filename} загружен", "id": statement.id}
+    return {"message": f"File {file.filename} uploaded", "id": statement.id}
