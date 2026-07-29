@@ -46,6 +46,8 @@ async def upload_statement(file: UploadFile = File(...), db: Session = Depends(g
             except UnicodeDecodeError:
                 raise HTTPException(status_code=400, detail="File encoding not supported.")
         operations = parse_bank_statement_csv(text_content)
+        if not operations:
+            logger.error(f"CSV parse error. First 300 chars: {text_content[:300]}")
     elif ext == '.docx':
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as tmp:
