@@ -8,8 +8,6 @@ from app.models.bank_statement import BankStatement
 from app.models.company import Company
 from app.models.kudir import KUDiREntry
 from app.utils.parser_txt import parse_bank_statement_txt
-from app.utils.parser_docx import parse_bank_statement_docx
-from app.utils.parser_xlsx import parse_bank_statement_xlsx
 from app.utils.parser_csv import parse_bank_statement_csv
 from datetime import datetime
 import uuid
