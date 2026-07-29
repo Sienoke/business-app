@@ -16,22 +16,28 @@ def detect_dialect(sample: str) -> str:
 
 def parse_bank_statement_csv(content: str) -> List[Dict]:
     operations = []
+    logger.info("Starting CSV parsing")
     
     if content.startswith('\ufeff'):
         content = content[1:]
     
     lines = [line.strip() for line in content.split('\n') if line.strip()]
+    logger.info(f"Total non-empty lines: {len(lines)}")
     if not lines:
+        logger.warning("No non-empty lines found")
         return operations
     
     delimiter = detect_dialect(lines[0])
+    logger.info(f"Detected delimiter: '{delimiter}'")
     
     csv_file = io.StringIO(content)
     reader = csv.DictReader(csv_file, delimiter=delimiter, quotechar='"')
     
     headers = reader.fieldnames
     if not headers:
+        logger.error("No headers found")
         return operations
+    logger.info(f"Headers: {headers}")
     
     date_col = None
     debit_col = None
@@ -68,42 +74,55 @@ def parse_bank_statement_csv(content: str) -> List[Dict]:
     if not purpose_col and len(headers) >= 12:
         purpose_col = headers[11]
     
+    logger.info(f"Detected columns: date={date_col}, debit={debit_col}, credit={credit_col}, counterparty={counterparty_col}, unp={unp_col}, purpose={purpose_col}")
+    
     if not date_col or (not debit_col and not credit_col):
-        logger.error(f"Cannot detect columns. Headers: {headers}")
+        logger.error("Cannot detect required columns")
         return operations
     
+    row_count = 0
     for row in reader:
+        row_count += 1
+        if row_count <= 3:
+            logger.info(f"Row {row_count}: {row}")
+        
         date_str = row.get(date_col, '').strip()
         if not date_str:
+            logger.debug(f"Row {row_count}: no date, skipping")
             continue
         
         if not re.match(r'\d{2}\.\d{2}\.\d{4}', date_str):
+            logger.debug(f"Row {row_count}: date format mismatch: '{date_str}', skipping")
             continue
         
         try:
             date_obj = datetime.strptime(date_str, '%d.%m.%Y').date()
-        except ValueError:
+        except ValueError as e:
+            logger.debug(f"Row {row_count}: date parse error: {e}, skipping")
             continue
         
         debit_str = row.get(debit_col, '').strip() if debit_col else ''
         credit_str = row.get(credit_col, '').strip() if credit_col else ''
         
         if not debit_str and not credit_str:
+            logger.debug(f"Row {row_count}: no debit/credit, skipping")
             continue
         
         debit = 0.0
         credit = 0.0
         if debit_str:
-            debit_str_clean = debit_str.replace(' ', '').replace(',', '.')
+            debit_clean = debit_str.replace(' ', '').replace(',', '.')
             try:
-                debit = float(debit_str_clean)
+                debit = float(debit_clean)
             except ValueError:
+                logger.debug(f"Row {row_count}: debit conversion failed for '{debit_str}'")
                 debit = 0.0
         if credit_str:
-            credit_str_clean = credit_str.replace(' ', '').replace(',', '.')
+            credit_clean = credit_str.replace(' ', '').replace(',', '.')
             try:
-                credit = float(credit_str_clean)
+                credit = float(credit_clean)
             except ValueError:
+                logger.debug(f"Row {row_count}: credit conversion failed for '{credit_str}'")
                 credit = 0.0
         
         is_income = None
@@ -115,6 +134,7 @@ def parse_bank_statement_csv(content: str) -> List[Dict]:
             is_income = False
             amount = debit
         else:
+            logger.debug(f"Row {row_count}: amount is zero, skipping")
             continue
         
         counterparty = row.get(counterparty_col, '').strip() if counterparty_col else ''
@@ -134,5 +154,7 @@ def parse_bank_statement_csv(content: str) -> List[Dict]:
             'debit': debit,
             'credit': credit
         })
+        logger.info(f"Row {row_count}: operation added: {date_obj} amount={amount} income={is_income}")
     
+    logger.info(f"Parsed {len(operations)} operations out of {row_count} data rows")
     return operations
