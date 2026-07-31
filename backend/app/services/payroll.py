@@ -1,8 +1,11 @@
+import logging
 from sqlalchemy.orm import Session
 from app.models.employee import Employee
 from app.models.company import Company
 from app.models.settings import AvgSalary
 from datetime import date
+
+logger = logging.getLogger(__name__)
 
 def calculate_employee_cost(employee: Employee, company: Company, avg_salary: float = None) -> dict:
     gross = float(employee.salary)
@@ -11,6 +14,8 @@ def calculate_employee_cost(employee: Employee, company: Company, avg_salary: fl
     fszn_employee_rate = float(company.fszn_employee_rate) / 100
     fszn_employer_rate = float(company.fszn_employer_rate) / 100
     belgosstrakh_rate = float(company.belgosstrakh_rate) / 100
+
+    logger.info(f"Rates for {employee.full_name}: income_tax_rate={income_tax_rate}, fszn_employee_rate={fszn_employee_rate}, fszn_employer_rate={fszn_employer_rate}, belgosstrakh_rate={belgosstrakh_rate}")
     
     income_tax = gross * income_tax_rate
     fszn_employee = gross * fszn_employee_rate
