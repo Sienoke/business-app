@@ -21,3 +21,7 @@ app.include_router(bank.router, prefix="/api/bank", tags=["Bank"])
 @app.get("/")
 def root():
     return {"message": "Business Accounting API is running"}
+
+from app.api import company, bank, employees
+...
+app.include_router(employees.router, prefix="/api/employees", tags=["Employees"])
