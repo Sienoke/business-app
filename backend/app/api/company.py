@@ -46,3 +46,30 @@ def get_company(db: Session = Depends(get_db)):
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     return company
+
+from pydantic import BaseModel
+
+class CompanyUpdate(BaseModel):
+    name: Optional[str] = None
+    unp: Optional[str] = None
+    usn_rate: Optional[float] = None
+    income_tax_rate: Optional[float] = None
+    fszn_employee_rate: Optional[float] = None
+    fszn_employer_rate: Optional[float] = None
+    belgosstrakh_rate: Optional[float] = None
+    reserve_fund_percent: Optional[float] = None
+    base_value: Optional[float] = None
+    usn_revenue_limit: Optional[float] = None
+
+@router.put("/", response_model=CompanyResponse)
+def update_company(update_data: CompanyUpdate, db: Session = Depends(get_db)):
+    company = db.query(Company).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    for key, value in update_data.dict(exclude_unset=True).items():
+        setattr(company, key, value)
+    
+    db.commit()
+    db.refresh(company)
+    return company
